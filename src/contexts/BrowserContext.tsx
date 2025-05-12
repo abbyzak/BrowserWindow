@@ -67,23 +67,9 @@ export function BrowserProvider({ children }: { children: ReactNode }) {
         const storedSettings = await storage.getSettings();
         setSettings(storedSettings);
         
-        // Load tabs
+        // Load tabs - don't create a default tab anymore
         const storedTabs = await storage.getTabs();
-        if (storedTabs.length > 0) {
-          setTabs(storedTabs);
-        } else {
-          // Create a default tab if none exist
-          const defaultTab: Tab = {
-            id: `tab-${Date.now()}`,
-            title: 'New Tab',
-            url: BROWSER_NEWTAB,
-            favicon: '',
-            isActive: true,
-            isPinned: false,
-          };
-          setTabs([defaultTab]);
-          await storage.saveTabs([defaultTab]);
-        }
+        setTabs(storedTabs);
         
         // Load bookmarks
         const storedBookmarks = await storage.getBookmarks();
@@ -336,8 +322,11 @@ export function BrowserProvider({ children }: { children: ReactNode }) {
     try {
       const favicon = getFavicon(url);
       
+      // Generate a unique ID using timestamp and random number
+      const uniqueId = `history-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
       const newHistoryItem: HistoryItem = {
-        id: `history-${Date.now()}`,
+        id: uniqueId,
         title: title || url,
         url: url,
         favicon: favicon,
@@ -370,6 +359,11 @@ export function BrowserProvider({ children }: { children: ReactNode }) {
     let targetTabId = tabId || (activeTab ? activeTab.id : null);
     
     try {
+      // Handle home button click
+      if (url === 'home') {
+        url = BROWSER_DEFAULT_URL;
+      }
+      
       // Format URL (add http:// if needed)
       if (!url.startsWith('about:') && !url.startsWith('http')) {
         // If it looks like a domain, add https://
@@ -674,13 +668,6 @@ export function BrowserProvider({ children }: { children: ReactNode }) {
       })));
     }
   }, [tabs]);
-  
-  // Create a new tab if none exist
-  useEffect(() => {
-    if (tabs.length === 0 && !isLoadingTabs) {
-      addTab(BROWSER_NEWTAB);
-    }
-  }, [tabs, isLoadingTabs, addTab]);
   
   return (
     <BrowserContext.Provider

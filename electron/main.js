@@ -126,6 +126,15 @@ async function createMainWindow() {
             nodeIntegration: false,
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js'),
+            webSecurity: true,
+            allowRunningInsecureContent: false,
+            javascript: true,
+            webviewTag: false,
+            sandbox: true,
+            enableRemoteModule: false,
+            spellcheck: true,
+            plugins: true,
+            nativeWindowOpen: true
         },
         show: false,
         title: 'Zen Browser',
@@ -140,7 +149,7 @@ async function createMainWindow() {
     if (isDev) {
         const loadApp = () => {
             console.log('Attempting to load Next.js app...');
-            mainWindow.loadURL('http://localhost:3002')
+            mainWindow.loadURL('http://localhost:3000')
                 .catch(err => {
                     console.error('Failed to load app, retrying in 3 seconds...', err);
                     setTimeout(loadApp, 3000);
@@ -200,7 +209,7 @@ ipcMain.handle('set-store-value', (event, key, value) => {
 });
 
 // Create a new browser tab window
-ipcMain.handle('create-tab', async (event, tabId, url) => {
+async function createTab(tabId, url) {
     console.log(`[Main] Creating tab ${tabId} with URL: ${url}`);
 
     // If this tab already exists, just focus it
@@ -217,6 +226,15 @@ ipcMain.handle('create-tab', async (event, tabId, url) => {
                 nodeIntegration: false,
                 contextIsolation: true,
                 partition: `persist:tab-${tabId}`,
+                webSecurity: true,
+                allowRunningInsecureContent: false,
+                javascript: true,
+                webviewTag: false,
+                sandbox: true,
+                enableRemoteModule: false,
+                spellcheck: true,
+                plugins: true,
+                nativeWindowOpen: true
             }
         });
 
@@ -268,6 +286,30 @@ ipcMain.handle('create-tab', async (event, tabId, url) => {
             return { action: 'deny' };
         });
 
+        // Handle navigation errors
+        tabView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+            console.error(`[Main] Failed to load ${validatedURL}: ${errorDescription} (${errorCode})`);
+            mainWindow.webContents.send('tab-loading', tabId, false);
+        });
+
+        // Add proper error handling for navigation
+        tabView.webContents.on('did-fail-provisional-load', (event, errorCode, errorDescription, validatedURL) => {
+            console.error(`[Main] Failed to load ${validatedURL}: ${errorDescription} (${errorCode})`);
+            mainWindow.webContents.send('tab-loading', tabId, false);
+        });
+
+        // Handle navigation state changes
+        tabView.webContents.on('did-start-navigation', (event, url, isInPlace, isMainFrame) => {
+            if (isMainFrame) {
+                mainWindow.webContents.send('tab-loading', tabId, true);
+            }
+        });
+
+        tabView.webContents.on('did-finish-load', () => {
+            mainWindow.webContents.send('tab-loading', tabId, false);
+            mainWindow.webContents.send('tab-url-updated', tabId, tabView.webContents.getURL());
+        });
+
         // Hide this view if it's not the active tab
         const activeTabId = store.get('activeTabId');
         if (activeTabId !== tabId) {
@@ -278,7 +320,10 @@ ipcMain.handle('create-tab', async (event, tabId, url) => {
         if (url) {
             try {
                 console.log(`[Main] Loading URL in tab: ${url}`);
-                await tabView.webContents.loadURL(url);
+                await tabView.webContents.loadURL(url, {
+                    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    extraHeaders: 'pragma: no-cache\n'
+                });
             } catch (loadError) {
                 console.error('[Main] Error loading URL:', loadError);
                 // Load a blank page with error message if URL loading fails
@@ -312,6 +357,11 @@ ipcMain.handle('create-tab', async (event, tabId, url) => {
         console.error('[Main] Error creating tab:', error);
         return false;
     }
+}
+
+// Create a new browser tab window IPC handler
+ipcMain.handle('create-tab', async (event, tabId, url) => {
+    return await createTab(tabId, url);
 });
 
 // Helper function to set the active tab view
@@ -372,43 +422,17 @@ ipcMain.handle('navigate-tab', async (event, tabId, url) => {
     if (!tabView) {
         console.log(`[Main] Tab ${tabId} doesn't exist, creating new one`);
         // Create a new tab with this URL
-        return await ipcMain.handle('create-tab', event, tabId, url);
+        return await createTab(tabId, url);
     } else {
         try {
             console.log(`[Main] Loading URL in existing tab: ${url}`);
-            await tabView.webContents.loadURL(url);
+            await tabView.webContents.loadURL(url, {
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                extraHeaders: 'pragma: no-cache\n'
+            });
             return tabView.webContents.getURL();
         } catch (error) {
             console.error('[Main] Error navigating tab:', error);
-
-            // Show error page in the tab instead of failing
-            const errorHtml = `
-            <html>
-            <head>
-                <title>Error loading page</title>
-                <style>
-                    body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; color: #333; }
-                    .container { max-width: 600px; margin: 0 auto; text-align: center; }
-                    .error-code { color: #888; font-size: 0.9rem; margin-top: 1rem; }
-                    h1 { color: #555; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Error loading page</h1>
-                    <p>The page could not be loaded. This might be due to network issues or content filtering.</p>
-                    <p class="error-code">Error: ${error.code || 'Unknown error'}</p>
-                </div>
-            </body>
-            </html>`;
-
-            try {
-                await tabView.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
-                mainWindow.webContents.send('tab-title-updated', tabId, 'Error loading page');
-            } catch (secondError) {
-                console.error('[Main] Error showing error page:', secondError);
-            }
-
             return null;
         }
     }

@@ -1,6 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    output: 'export',  // Static export for Electron
     images: {
         unoptimized: true, // Necessary for static export
     },
